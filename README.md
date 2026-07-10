@@ -84,7 +84,8 @@ MODEL_NAME=yandexgpt-lite/latest
 ```text
 .
 ├── README.md
-├── plan ver 2.md
+├── docs/
+│   └── course_project_plan.md
 └── meta_planning_agent/
     ├── app/
     ├── data/
