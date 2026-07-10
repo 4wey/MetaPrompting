@@ -1,19 +1,107 @@
 """LLM access layer.
 
-Later this module can be replaced with a real API client.
-For the MVP we use a predictable local stub so the project runs offline.
+Supports:
+- local deterministic stub for offline development;
+- YandexGPT via Yandex Cloud Foundation Models REST API.
 """
 
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass
+from typing import Any
+
+import requests
+
+from app.config import config
+
+
+class LLMError(RuntimeError):
+    """Raised when an LLM provider cannot return a valid response."""
+
+
+@dataclass
+class GenerationOptions:
+    temperature: float | None = None
+    max_tokens: int | None = None
+
 
 class LLMClient:
-    """Very small deterministic stub for Planner, Solver and Critic roles."""
+    """Unified client for stub and Yandex providers."""
 
-    def __init__(self, model_name: str = "stub-meta-planning-model") -> None:
-        self.model_name = model_name
+    def __init__(self, model_name: str | None = None, provider: str | None = None) -> None:
+        self.model_name = model_name or config.MODEL_NAME
+        self.provider = (provider or config.LLM_PROVIDER).lower().strip()
 
-    def generate(self, prompt: str) -> str:
+    def generate(self, prompt: str, options: GenerationOptions | None = None) -> str:
+        if self.provider == "yandex":
+            return self._generate_yandex(prompt, options or GenerationOptions())
+        return self._generate_stub(prompt)
+
+    def _generate_yandex(self, prompt: str, options: GenerationOptions) -> str:
+        if not config.YANDEX_API_KEY:
+            raise LLMError(
+                "Для провайдера yandex не задан YANDEX_API_KEY в .env"
+            )
+        if not config.YANDEX_MODEL_URI:
+            raise LLMError(
+                "Для провайдера yandex не задан YANDEX_FOLDER_ID или YANDEX_MODEL_URI в .env"
+            )
+
+        payload = {
+            "modelUri": config.YANDEX_MODEL_URI,
+            "completionOptions": {
+                "stream": False,
+                "temperature": options.temperature if options.temperature is not None else config.DEFAULT_TEMPERATURE,
+                "maxTokens": str(options.max_tokens if options.max_tokens is not None else config.DEFAULT_MAX_TOKENS),
+            },
+            "messages": [
+                {"role": "user", "text": prompt},
+            ],
+        }
+        headers = {
+            "Authorization": f"Api-Key {config.YANDEX_API_KEY}",
+            "Content-Type": "application/json",
+        }
+        if config.YANDEX_FOLDER_ID:
+            headers["x-folder-id"] = config.YANDEX_FOLDER_ID
+
+        response = requests.post(
+            config.YANDEX_API_URL,
+            headers=headers,
+            json=payload,
+            timeout=config.REQUEST_TIMEOUT_SEC,
+        )
+        if response.status_code >= 400:
+            raise LLMError(
+                f"Yandex API вернул ошибку {response.status_code}: {response.text}"
+            )
+
+        data = response.json()
+        text = self._extract_yandex_text(data)
+        if not text:
+            raise LLMError(
+                "Yandex API вернул ответ без текста: " + json.dumps(data, ensure_ascii=False)
+            )
+        return text.strip()
+
+    @staticmethod
+    def _extract_yandex_text(data: dict[str, Any]) -> str:
+        result = data.get("result", data)
+        alternatives = result.get("alternatives") or []
+        if alternatives:
+            first = alternatives[0]
+            if isinstance(first, dict):
+                message = first.get("message")
+                if isinstance(message, dict) and message.get("text"):
+                    return str(message["text"])
+                if first.get("text"):
+                    return str(first["text"])
+        if result.get("text"):
+            return str(result["text"])
+        return ""
+
+    def _generate_stub(self, prompt: str) -> str:
         prompt_lower = prompt.lower()
 
         if "critic" in prompt_lower:

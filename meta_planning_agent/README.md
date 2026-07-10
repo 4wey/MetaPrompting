@@ -1,48 +1,126 @@
 # Meta Planning Agent
 
-This project is a minimal учебный MVP of an LLM-based agent for prompt meta-planning.
+Python MVP агентной системы для техники Meta-Prompt Planning.
 
-Research question:
-Does an agent with meta-planning improve the quality of solving complex multi-step tasks compared with a baseline LLM?
+Основная идея: перед решением сложной задачи модель сначала строит стратегию и план, затем отдельная роль решает задачу по этому плану, а критик проверяет результат и может запросить перепланирование.
 
-The core idea is to separate the work into roles:
-- Planner builds a strategy and step-by-step plan.
-- Solver follows the plan and produces a draft solution.
-- Critic reviews the result and can request replanning.
+## Исследовательский вопрос
 
-Current status:
-- local MVP;
-- deterministic LLM stub instead of a real API;
-- prompts stored separately in `.md` files;
-- run logs saved as `.json`;
-- dataset stored in `.csv`.
+Может ли явный этап meta-planning улучшить качество решений для сложных многошаговых задач по сравнению с прямым ответом базовой LLM?
 
-## Project structure
+## Что уже умеет
 
-- `app/` - core Python modules
-- `prompts/` - prompt templates for Planner, Solver, Critic
-- `data/` - test dataset
-- `logs/` - saved run logs
-- `notebooks/` - future analysis notebooks
-- `main.py` - one local test run
+- режим `stub` для локальной офлайн-отладки;
+- режим `yandex` для реального подключения к YandexGPT через REST API;
+- запуск одной задачи из `data/tasks.csv`;
+- прогон всего датасета из CSV;
+- интерактивный режим "спросил -> агент ответил";
+- сохранение JSON-логов отдельных запусков и CSV-результатов пакетного прогона.
 
-## How to run
+## Архитектура
 
-1. Create a virtual environment.
-2. Install dependencies:
+```text
+Task -> Planner -> Solver -> Critic -> Final answer
+                  ^              |
+                  |--- REPLAN ---|
+```
+
+- **Planner** строит стратегию, шаги, критерии качества и условия перепланирования.
+- **Solver** решает задачу по готовому плану.
+- **Critic** проверяет решение и при необходимости инициирует повторное планирование.
+- **Agent** управляет циклом и ограничивает число перепланирований.
+
+## Структура проекта
+
+- `app/` — Python-модули агента.
+- `prompts/` — шаблоны промптов для Planner / Solver / Critic.
+- `data/` — входной CSV-датасет.
+- `logs/` — JSON-логи одиночных запусков.
+- `results/` — итоговые CSV-файлы пакетных прогонов.
+- `main.py` — CLI-точка входа.
+
+## Установка
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env
 ```
 
-3. Run the MVP:
+По умолчанию в `.env.example` выбран `LLM_PROVIDER=stub`, поэтому проект можно запустить без API-ключей.
+
+## Настройка провайдера
+
+### 1. Локальная заглушка
+
+В `.env`:
+
+```env
+LLM_PROVIDER=stub
+```
+
+### 2. Реальный YandexGPT
+
+В `.env`:
+
+```env
+LLM_PROVIDER=yandex
+YANDEX_API_KEY=...
+YANDEX_FOLDER_ID=...
+MODEL_NAME=yandexgpt-lite/latest
+```
+
+При желании можно явно задать `YANDEX_MODEL_URI`.
+
+## Запуск
+
+Все команды выполняются из папки `meta_planning_agent`.
+
+### Одна задача из CSV
 
 ```bash
-python main.py
+python main.py single
+python main.py single --task-id q03
 ```
 
-## Notes
+### Весь датасет
 
-- The project runs locally without an external model API.
-- All model interaction goes through `app/llm.py`.
-- Later, the stub in `app/llm.py` can be replaced with a real API client without rebuilding the whole project.
+```bash
+python main.py dataset
+```
+
+Результат будет сохранён в `results/dataset_run_<timestamp>.csv`.
+
+### Интерактивный режим
+
+```bash
+python main.py chat
+```
+
+## Формат входного датасета
+
+CSV должен содержать столбцы:
+
+- `id`
+- `category`
+- `task`
+- `difficulty`
+- `why_metaplanning_relevant`
+- `notes`
+
+Можно просто заменить файл `data/tasks.csv` своим датасетом в том же формате.
+
+## Результаты запусков
+
+- `logs/*.json` — подробные логи одиночных запусков.
+- `results/*.csv` — таблицы пакетного прогона датасета.
+
+Эти файлы считаются локальными артефактами экспериментов и не коммитятся в репозиторий.
+
+## Ограничения и следующий этап
+
+- `stub`-режим проверяет пайплайн, но не качество LLM.
+- Нужен baseline с прямым ответом модели без Planner / Critic.
+- Нужна ручная или полуавтоматическая оценка качества ответов.
+- Нужны unit-тесты для парсинга структурированных ответов.
